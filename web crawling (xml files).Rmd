@@ -22,6 +22,7 @@ library(lubridate)
 library(plyr) 
 options(stringsAsFactors = FALSE)
 ```
+
 - Web crawling
 
 ```{r}
@@ -72,37 +73,11 @@ datafolder <- "xml_files/"
 (filesinfolder <- list.files(datafolder))
 ```
 
+
 - Fetching required data from the downloaded xml files
 
-The nodes under the "EstablishmentDetail" nodes in each xml file are the data required. The following is one sample of the "EstablishmentDetail" node:
-
-<EstablishmentDetail>
-  <FHRSID>982849</FHRSID>
-  <LocalAuthorityBusinessID>EHDC12463</LocalAuthorityBusinessID>
-  <BusinessName>1 & 30 DONALD DEWAR COURT</BusinessName>
-  <BusinessType>Hospitals/Childcare/Caring Premises</BusinessType>
-  <BusinessTypeID>5</BusinessTypeID>
-  <AddressLine2>1 & 30 Donald Dewar Court</AddressLine2>
-  <AddressLine3>Provost Fraser Drive</AddressLine3>
-  <AddressLine4>Aberdeen</AddressLine4>
-  <PostCode>AB16 5JB</PostCode>
-  <RatingValue>Pass</RatingValue>
-  <RatingKey>fhis_pass_en-GB</RatingKey>
-  <RatingDate>2017-05-15</RatingDate>
-  <LocalAuthorityCode>760</LocalAuthorityCode>
-  <LocalAuthorityName>Aberdeen City</LocalAuthorityName>
-  <LocalAuthorityWebSite>http://www.aberdeencity.gov.uk</LocalAuthorityWebSite>
-  <LocalAuthorityEmailAddress>commercial@aberdeencity.gov.uk</LocalAuthorityEmailAddress>
-  <Scores/>
-    <SchemeType>FHIS</SchemeType>
-    <NewRatingPending>False</NewRatingPending>
-  <Geocode>
-    <Longitude>-2.16749501228333</Longitude>
-    <Latitude>57.16130828857420</Latitude>
-  </Geocode>
-</EstablishmentDetail>
-
 There are some nested nodes under the "EstablishmentDetail" nodes such as "scores" node and "geocode" node. Therefore, all the nodes under the EstablishmentDetail should be fully expanded and combined together in a dataframe for further analysis in the future.
+
 
 ```{r message=FALSE, warning=FALSE, eval = FALSE}
 #Making an empty list to store data frames (tibbles) extracted from the xml files
@@ -149,7 +124,9 @@ numeric_columns <- c("RatingValue", "Scores.Hygiene", "Scores.Structural", "Scor
 combined <- combined %>% mutate_at(numeric_columns, as.numeric)
 ```
 
+
 However, this method takes a long time to fetch all the data from xml files and the column called "RatingDate.nil" is actually duplicated column of the "RatingDate" column. That is, when the RatingDate.nil is true, it means that the RatingDate has NA value. Therefore, a better method to fetch the xml files much faster and more accurate is as follows:
+
 
 ```{r message=FALSE, warning=FALSE, eval = FALSE}
 #Making an empty list to store the data required from the xml files
@@ -196,6 +173,7 @@ combined_new <- as_tibble(combined_new)
 numeric_columns <- c("RatingValue", "Hygiene", "Structural", "ConfidenceInManagement", "Longitude", "Latitude")
 combined_new <- combined_new %>% mutate_at(numeric_columns, as.numeric)
 ```
+
 
 The “combined” and “combined_new” indicate the same data. However, it seems clear that the code making the combined_new is run much faster without misreading the redundant nodes such as “RatingDate.nil”. Therefore, this report recommends the latter method (combined_new) for the food hygiene rating scheme xml files, unless a further analysis requires a data related to “RatingDate.nil” probably to check whether the xml files used a blank format or xsi:nil format to indicate a null value of the node.
 
