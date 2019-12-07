@@ -1,0 +1,201 @@
+---
+title: "web crawling (xml files)"
+author: "Jung"
+date: '2019 12 6 '
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
+```
+
+```{r, results = "hide"}
+library(httr)
+library(rvest)
+library(stringr)
+library(dplyr)
+library(XML)
+library(xml2)
+library("methods")
+library(data.table)
+library(lubridate)
+library(plyr) 
+options(stringsAsFactors = FALSE)
+```
+- Web crawling
+
+```{r}
+#fetch the url source content
+ratings_file_list <- "https://data.food.gov.uk/catalog/datasets/38dd8d6a-5ab1-4f50-b753-ab33288e3200"
+
+source_ratings <- read_html(ratings_file_list)
+
+#fetch the urls of the xml files
+source_ratings_urls <- source_ratings %>%
+  html_nodes(".o-dataset-distribution--link") %>%
+  html_attr("href")
+
+#fetch the titles of the xml files
+source_ratings_titles <- source_ratings %>%
+  html_nodes(".c-dataset-element--title") %>%
+  html_text() %>%
+  trimws(.)
+```
+
+```{r}
+#Making a data frame with the fetched urls and titles
+my_data_frame <- data.frame(titles = source_ratings_titles,
+                            urls = source_ratings_urls)
+
+my_data_frame <- my_data_frame[-1,]
+
+my_data_frame$urls <- as.character(my_data_frame$urls)
+
+#dropping the files in welsh
+rows_welsh <- which(grepl("Welsh", my_data_frame$titles))
+
+my_data_frame <- my_data_frame[-rows_welsh,]
+```
+
+```{r message=FALSE, warning=FALSE, results="hide"}
+#downloading the whole xml files from the web
+for (i in 1:nrow(my_data_frame)) {
+  split_elements <- strsplit(my_data_frame$urls[i], split = "/")[[1]]
+  my_file_name <- split_elements[length(split_elements)]
+  download.file(my_data_frame$urls[i], destfile = paste0("xml_files/",my_file_name))
+}
+```
+
+```{r}
+datafolder <- "xml_files/"
+#Checking all the files in the datafolder "xml_files"
+(filesinfolder <- list.files(datafolder))
+```
+
+- Fetching required data from the downloaded xml files
+
+The nodes under the "EstablishmentDetail" nodes in each xml file are the data required. The following is one sample of the "EstablishmentDetail" node:
+
+<EstablishmentDetail>
+  <FHRSID>982849</FHRSID>
+  <LocalAuthorityBusinessID>EHDC12463</LocalAuthorityBusinessID>
+  <BusinessName>1 & 30 DONALD DEWAR COURT</BusinessName>
+  <BusinessType>Hospitals/Childcare/Caring Premises</BusinessType>
+  <BusinessTypeID>5</BusinessTypeID>
+  <AddressLine2>1 & 30 Donald Dewar Court</AddressLine2>
+  <AddressLine3>Provost Fraser Drive</AddressLine3>
+  <AddressLine4>Aberdeen</AddressLine4>
+  <PostCode>AB16 5JB</PostCode>
+  <RatingValue>Pass</RatingValue>
+  <RatingKey>fhis_pass_en-GB</RatingKey>
+  <RatingDate>2017-05-15</RatingDate>
+  <LocalAuthorityCode>760</LocalAuthorityCode>
+  <LocalAuthorityName>Aberdeen City</LocalAuthorityName>
+  <LocalAuthorityWebSite>http://www.aberdeencity.gov.uk</LocalAuthorityWebSite>
+  <LocalAuthorityEmailAddress>commercial@aberdeencity.gov.uk</LocalAuthorityEmailAddress>
+  <Scores/>
+    <SchemeType>FHIS</SchemeType>
+    <NewRatingPending>False</NewRatingPending>
+  <Geocode>
+    <Longitude>-2.16749501228333</Longitude>
+    <Latitude>57.16130828857420</Latitude>
+  </Geocode>
+</EstablishmentDetail>
+
+There are some nested nodes under the "EstablishmentDetail" nodes such as "scores" node and "geocode" node. Therefore, all the nodes under the EstablishmentDetail should be fully expanded and combined together in a dataframe for further analysis in the future.
+
+```{r message=FALSE, warning=FALSE, eval = FALSE}
+#Making an empty list to store data frames (tibbles) extracted from the xml files
+first <- list()
+
+#for loop to access each xml file downloaded
+for(j in 1:length(filesinfolder)){
+  this_file <- filesinfolder[j]
+  #if statement to read only the English files
+  if (grepl("en", this_file)) {
+    #parse the xml file and convert it to a list containing the EstablishmentDetails nodes under the EstablishmentCollection node
+    doc_new <- xmlParse(file = paste(datafolder, this_file, sep=""))
+    xml_list <- xmlToList(doc_new)$EstablishmentCollection
+    
+    #what function(x) in lapply does:
+    #1. flattens the each element of xml_list
+    #2. makes it  as an one line of tibble
+    
+    #complete_tibble is the combined tibble of the one line of tibbles
+    complete_tibble <- do.call(rbind.fill, lapply(xml_list, function(x) {
+      y <- unlist(x)
+      y <- as_tibble(t(y))
+      return(y)
+    }))
+    #store the complete_tibble in to the list l_new
+    first <- append(first, list(complete_tibble))
+  }
+}
+```
+
+```{r}
+#Combine all the tibbles in the list "l"
+combined <- rbindlist(first, fill = TRUE)
+```
+
+```{r}
+#change the values in the RatingDate column to datetime objects for further analysis
+combined$RatingDate <- ymd(combined$RatingDate)
+```
+
+```{r}
+#proper data type for numeric columns for further analysis
+numeric_columns <- c("RatingValue", "Scores.Hygiene", "Scores.Structural", "Scores.ConfidenceInManagement", "Geocode.Longitude", "Geocode.Latitude")
+combined <- combined %>% mutate_at(numeric_columns, as.numeric)
+```
+
+However, this method takes a long time to fetch all the data from xml files and the column called "RatingDate.nil" is actually duplicated column of the "RatingDate" column. That is, when the RatingDate.nil is true, it means that the RatingDate has NA value. Therefore, a better method to fetch the xml files much faster and more accurate is as follows:
+
+```{r message=FALSE, warning=FALSE, eval = FALSE}
+#Making an empty list to store the data required from the xml files
+second <- list()
+
+#for loop to access each xml file downloaded
+for(j in 1:length(filesinfolder)){
+  this_file <- filesinfolder[j]
+  if (grepl("en", this_file)) {
+    doc <- xmlParse(file = paste(datafolder, this_file, sep=""))
+    #What function(x) in lapply does:
+    #1.expand the each EstablishmentDetail nodeset and fetches the node names and values
+    #2.match the names and values to make it as an one line of dataframe
+  
+    #What lapply does: make a list of all one line dataframes
+  
+    #df is a combined large dataframe of all the one line dataframes
+    #(i.e. df indicates a complete dataframe genereated from one xml file)
+    df <- do.call(rbind.fill, lapply(doc['//EstablishmentCollection/EstablishmentDetail'], function(x) {
+    names <- xpathSApply(x, './/.', xmlName)
+    #Extract the node names required and assign it to "colnames"
+    colnames <- names[which(names == "text") - 1]
+    values <- xpathSApply(x, ".//text()", xmlValue)
+    return(as.data.frame(t(setNames(values, colnames))))
+    }))
+    second <- append(second, list(df))
+  }
+}
+```
+
+```{r}
+#Combine all the dataframes in the list "l"
+combined_new <- rbindlist(second, fill = TRUE)
+```
+
+```{r}
+#change the values in the RatingDate column to datetime objects for further analysis
+combined_new$RatingDate <- ymd(combined_new$RatingDate)
+```
+
+```{r}
+#proper data type for numeric columns for further anlaysis
+combined_new <- as_tibble(combined_new)
+numeric_columns <- c("RatingValue", "Hygiene", "Structural", "ConfidenceInManagement", "Longitude", "Latitude")
+combined_new <- combined_new %>% mutate_at(numeric_columns, as.numeric)
+```
+
+The “combined” and “combined_new” indicate the same data. However, it seems clear that the code making the combined_new is run much faster without misreading the redundant nodes such as “RatingDate.nil”. Therefore, this report recommends the latter method (combined_new) for the food hygiene rating scheme xml files, unless a further analysis requires a data related to “RatingDate.nil” probably to check whether the xml files used a blank format or xsi:nil format to indicate a null value of the node.
+
